@@ -22,6 +22,7 @@ CREATE INDEX IF NOT EXISTS idx_ds     ON daily_prices(date, symbol);
 """
 
 def get_conn():
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(DB_PATH))
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
@@ -35,6 +36,7 @@ def init_db():
 
 def upsert(df: pd.DataFrame) -> int:
     """Insert rows; ignore duplicates. Returns count inserted."""
+    init_db()
     if df.empty:
         return 0
     cols = ["date","symbol","series","name","isin","open","high","low","close",
@@ -48,10 +50,10 @@ def upsert(df: pd.DataFrame) -> int:
     with get_conn() as conn:
         df2.to_sql("daily_prices", conn, if_exists="append", index=False,
                    method="multi", chunksize=500)
-        # ignore duplicate key via OR IGNORE
     return len(df2)
 
 def upsert_safe(df: pd.DataFrame) -> int:
+    init_db()
     if df.empty:
         return 0
     cols = ["date","symbol","series","name","isin","open","high","low","close",
@@ -71,26 +73,43 @@ def upsert_safe(df: pd.DataFrame) -> int:
     return len(vals)
 
 def query(sql: str, params=()) -> pd.DataFrame:
+    init_db()
     with get_conn() as c:
         return pd.read_sql_query(sql, c, params=params)
 
 def available_dates() -> list:
-    df = query("SELECT DISTINCT date FROM daily_prices ORDER BY date DESC")
-    return df["date"].tolist()
+    init_db()
+    try:
+        df = query("SELECT DISTINCT date FROM daily_prices ORDER BY date DESC")
+        return df["date"].tolist() if "date" in df.columns else []
+    except Exception:
+        return []
 
 def latest_date() -> str:
-    df = query("SELECT MAX(date) as d FROM daily_prices")
-    return df["d"].iloc[0]
+    init_db()
+    try:
+        df = query("SELECT MAX(date) as d FROM daily_prices")
+        return df["d"].iloc[0] if not df.empty else None
+    except Exception:
+        return None
 
 def get_history(symbol: str, n_days: int = 260) -> pd.DataFrame:
-    return query(
-        "SELECT * FROM daily_prices WHERE symbol=? AND series='EQ' "
-        "ORDER BY date DESC LIMIT ?", (symbol, n_days))
+    init_db()
+    try:
+        return query(
+            "SELECT * FROM daily_prices WHERE symbol=? AND series='EQ' "
+            "ORDER BY date DESC LIMIT ?", (symbol, n_days))
+    except Exception:
+        return pd.DataFrame()
 
 def get_day(date: str, series: str = "EQ") -> pd.DataFrame:
-    return query(
-        "SELECT * FROM daily_prices WHERE date=? AND series=?",
-        (date, series))
+    init_db()
+    try:
+        return query(
+            "SELECT * FROM daily_prices WHERE date=? AND series=?",
+            (date, series))
+    except Exception:
+        return pd.DataFrame()
 
 def get_multi_day(n: int = 60, series: str = "EQ") -> pd.DataFrame:
     """Get last n dates for all symbols — used for scanner calculations."""
@@ -98,12 +117,21 @@ def get_multi_day(n: int = 60, series: str = "EQ") -> pd.DataFrame:
     if not dates:
         return pd.DataFrame()
     ph = ",".join(["?"]*len(dates))
-    return query(
-        f"SELECT * FROM daily_prices WHERE date IN ({ph}) AND series=?",
-        dates + [series])
+    try:
+        return query(
+            f"SELECT * FROM daily_prices WHERE date IN ({ph}) AND series=?",
+            dates + [series])
+    except Exception:
+        return pd.DataFrame()
 
 def db_stats() -> dict:
-    r = query("SELECT COUNT(*) as rows, COUNT(DISTINCT date) as days, "
-              "COUNT(DISTINCT symbol) as symbols, MIN(date) as first, "
-              "MAX(date) as last FROM daily_prices WHERE series='EQ'")
-    return r.iloc[0].to_dict()
+    init_db()
+    try:
+        r = query("SELECT COUNT(*) as rows, COUNT(DISTINCT date) as days, "
+                  "COUNT(DISTINCT symbol) as symbols, MIN(date) as first, "
+                  "MAX(date) as last FROM daily_prices WHERE series='EQ'")
+        if not r.empty:
+            return r.iloc[0].to_dict()
+    except Exception:
+        pass
+    return {"rows": 0, "days": 0, "symbols": 0, "first": None, "last": None}
