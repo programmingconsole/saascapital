@@ -4,9 +4,11 @@ SAAS Capital | LIVE TERMINAL PRO  —  Institutional Live Market Suite
 Advanced, responsive live market dashboard featuring:
   • Real-time Global Market Cues (India, US, Europe, Asia, Commodities, FX)
   • Yesterday → Live Equity Board with live Yahoo Finance feeds
-  • Real-time Sector Breakdown & Performance Heatmap
-  • Interactive Stock Screener with Search & Multi-sector filtering
-  • Technical Charting & Analysis Modal (Candlesticks, Volume, RSI, Moving Averages)
+  • ⭐ Custom Watchlist & Favorites Manager
+  • 📥 1-Click CSV Screener Data Exporter
+  • 🗺️ Interactive Sector Heatmap & Treemap
+  • 🚀 Top Movers, Breakouts & Volatility Alerts
+  • 📈 Technical Charting & Multi-Stock Relative Performance Comparison
   • Obsidian Dark Gold & Light Luxury Responsive UI Engine
 """
 import sys
@@ -29,9 +31,11 @@ except Exception:
 
 try:
     import plotly.graph_objects as go
+    import plotly.express as px
     from plotly.subplots import make_subplots
 except Exception:
     go = None
+    px = None
 
 try:
     from streamlit_autorefresh import st_autorefresh
@@ -73,8 +77,6 @@ with st.sidebar:
     if st.button("↻ Force Data Refresh", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
-
-
 
 
 # Apply theme styles dynamically based on sidebar toggle
@@ -563,7 +565,7 @@ for idx, (group_name, items) in enumerate(GLOBAL_CUES_MAP.items()):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# SECTION 2: YESTERDAY → LIVE SCREENER & HEATMAP
+# SECTION 2: YESTERDAY → LIVE SCREENER, WATCHLIST & HEATMAP
 # ═══════════════════════════════════════════════════════════════════════════
 st.markdown("---")
 
@@ -601,10 +603,6 @@ if selected_sector != "All Sectors":
 stock_items = tuple((s, f"{s}.NS") for s in filtered_df["symbol"])
 with st.spinner("⚡ Fetching live stock prices..."):
     live_stock_quotes = fetch_all_quotes(stock_items)
-if search_query:
-    filtered_df = filtered_df[filtered_df["symbol"].str.contains(search_query)]
-if selected_sector != "All Sectors":
-    filtered_df = filtered_df[filtered_df["sector"] == selected_sector]
 
 # Attach Live Prices & Computations
 live_records = []
@@ -650,15 +648,25 @@ if not board_df.empty:
     else:
         board_df = board_df.sort_values("turnover", ascending=False)
 
-# Board Views: Table, Heatmap, Gainers/Losers, Technical Chart
-view_tab1, view_tab2, view_tab3, view_tab4 = st.tabs([
-    "📋 Screener Table", "🔥 Sector Heatmap", "🚀 Top Movers", "📈 Technical Chart & Insights"
+# Board Views: Table, Watchlist, Heatmap & Treemap, Top Movers, Technical Analysis & Comparison
+view_tab1, view_tab_wl, view_tab2, view_tab3, view_tab4 = st.tabs([
+    "📋 Screener Table", "⭐ My Watchlist", "🗺️ Sector Treemap", "🚀 Top Movers & Alerts", "📈 Technicals & Comparison"
 ])
 
 with view_tab1:
     if board_df.empty:
         st.info("ℹ️ No matching stocks found for your filter/search. Try adjusting the search term or increasing the 'Stocks to Track' slider in the sidebar.")
     else:
+        # Download CSV Button
+        csv_data = board_df.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="📥 Export Live Screener CSV",
+            data=csv_data,
+            file_name=f"SAAS_Capital_Screener_{now_ist:%Y%m%d_%H%M%S}.csv",
+            mime="text/csv",
+            key="download_screener_csv"
+        )
+        
         rows_html = []
         for _, r in board_df.iterrows():
             sym = r["symbol"]
@@ -696,6 +704,71 @@ with view_tab1:
         st.markdown(table_html, unsafe_allow_html=True)
 
 
+with view_tab_wl:
+    st.markdown("#### ⭐ Custom Watchlist & Favorites Manager")
+    default_wl_list = ["RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "SBIN", "BHARTIARTL", "TATAMOTORS"]
+    available_symbols = uni_df["symbol"].tolist()
+    
+    selected_watchlist = st.multiselect(
+        "Select Favorite Stocks to Track Live",
+        options=available_symbols,
+        default=[s for s in default_wl_list if s in available_symbols]
+    )
+    
+    if selected_watchlist:
+        wl_stock_items = tuple((s, f"{s}.NS") for s in selected_watchlist)
+        with st.spinner("Fetching live watchlist prices..."):
+            wl_quotes = fetch_all_quotes(wl_stock_items)
+            
+        wl_rows = []
+        for s in selected_watchlist:
+            # find in uni_df
+            match_row = uni_df[uni_df["symbol"] == s]
+            ycl = match_row["close"].iloc[0] if not match_row.empty else 0.0
+            sec = match_row["sector"].iloc[0] if not match_row.empty else "Other"
+            
+            q = wl_quotes.get(s, {})
+            if q.get("ok"):
+                ltp = q["last"]
+                chg = ltp - ycl
+                pct = (chg / ycl * 100) if ycl else 0.0
+            else:
+                ltp, chg, pct = ycl, 0.0, 0.0
+                
+            wl_rows.append({
+                "symbol": s, "sector": sec, "yest_close": ycl,
+                "live_ltp": ltp, "chg": chg, "pct": pct
+            })
+            
+        wl_df = pd.DataFrame(wl_rows)
+        
+        # Display Watchlist Cards
+        wl_cards_html = []
+        for _, r in wl_df.iterrows():
+            pct = r["pct"]
+            card_cls = "up" if pct >= 0 else "dn"
+            sign = "+" if pct >= 0 else ""
+            badge_cls = "pos" if pct >= 0 else "neg"
+            
+            wl_cards_html.append(
+                f'<div class="cue-card {card_cls}" style="margin-bottom:12px;">'
+                f'<div style="display:flex; justify-content:space-between; align-items:center;">'
+                f'<div>'
+                f'<div class="cue-label">{r["symbol"]} ({r["sector"]})</div>'
+                f'<div class="cue-price">₹{r["live_ltp"]:,.2f}</div>'
+                f'</div>'
+                f'<div style="text-align:right;">'
+                f'<span class="badge-pct {badge_cls}">{sign}{pct:.2f}%</span>'
+                f'<div style="font-size:11px; color:var(--text-muted); margin-top:4px;">Yest: ₹{r["yest_close"]:,.2f}</div>'
+                f'</div>'
+                f'</div>'
+                f'</div>'
+            )
+        st.markdown(f'<div class="cue-grid">{"".join(wl_cards_html)}</div>', unsafe_allow_html=True)
+    else:
+        st.info("⭐ Select one or more stocks above to build your custom live watchlist.")
+
+
 with view_tab2:
     if board_df.empty:
         st.info("ℹ️ No sector data available for the current filter.")
@@ -706,27 +779,54 @@ with view_tab2:
             total_turnover=("turnover", "sum")
         ).reset_index().sort_values("avg_pct", ascending=False)
         
-        st.markdown("#### Sector Returns Overview")
+        col_sec1, col_sec2 = st.columns([1.2, 1])
         
-        if go is not None:
-            colors = [green if val >= 0 else red for val in sector_summary["avg_pct"]]
-            fig_sec = go.Figure(go.Bar(
-                x=sector_summary["sector"],
-                y=sector_summary["avg_pct"],
-                marker_color=colors,
-                text=[f"{v:+.2f}%" for v in sector_summary["avg_pct"]],
-                textposition="auto"
-            ))
-            fig_sec.update_layout(
-                template="plotly_dark" if is_dark else "plotly_white",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="rgba(0,0,0,0)",
-                margin=dict(l=20, r=20, t=30, b=40),
-                height=340,
-                yaxis_title="Average Change (%)",
-                xaxis_title="Sector"
-            )
-            st.plotly_chart(fig_sec, use_container_width=True)
+        with col_sec1:
+            st.markdown("#### 🗺️ Market Sector Treemap (Size = Turnover, Color = Change %)")
+            if px is not None and not sector_summary.empty:
+                fig_tree = px.treemap(
+                    sector_summary,
+                    path=["sector"],
+                    values="total_turnover",
+                    color="avg_pct",
+                    color_continuous_scale=["#F43F5E", "#1E2738", "#10B981"],
+                    color_continuous_midpoint=0,
+                    custom_data=["avg_pct", "count", "total_turnover"]
+                )
+                fig_tree.update_traces(
+                    hovertemplate="<b>%{label}</b><br>Avg Change: %{customdata[0]:+.2f}%<br>Stocks: %{customdata[1]}<br>Turnover: ₹%{customdata[2]:,.0f}"
+                )
+                fig_tree.update_layout(
+                    template="plotly_dark" if is_dark else "plotly_white",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    margin=dict(l=10, r=10, t=10, b=10),
+                    height=360
+                )
+                st.plotly_chart(fig_tree, use_container_width=True)
+                
+        with col_sec2:
+            st.markdown("#### 📊 Sector Average Return (%)")
+            if go is not None:
+                colors = [green if val >= 0 else red for val in sector_summary["avg_pct"]]
+                fig_sec = go.Figure(go.Bar(
+                    x=sector_summary["avg_pct"],
+                    y=sector_summary["sector"],
+                    orientation="h",
+                    marker_color=colors,
+                    text=[f"{v:+.2f}%" for v in sector_summary["avg_pct"]],
+                    textposition="auto"
+                ))
+                fig_sec.update_layout(
+                    template="plotly_dark" if is_dark else "plotly_white",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    margin=dict(l=20, r=20, t=10, b=10),
+                    height=360,
+                    xaxis_title="Average Return (%)",
+                    yaxis=dict(autorange="reversed")
+                )
+                st.plotly_chart(fig_sec, use_container_width=True)
 
 
 with view_tab3:
@@ -772,74 +872,129 @@ with view_tab3:
                 </div>
                 """, unsafe_allow_html=True)
 
+        st.markdown("---")
+        st.markdown("#### ⚡ Day Range Breakouts & High Volatility Alerts")
+        breakout_col1, breakout_col2 = st.columns(2)
+        
+        # High Breakout Stocks (LTP near High)
+        high_breakouts = board_df[board_df["live_ltp"] >= board_df["high"] * 0.995].head(4)
+        with breakout_col1:
+            st.markdown("##### 🚀 Day High Breakout Candidates")
+            if not high_breakouts.empty:
+                for _, r in high_breakouts.iterrows():
+                    st.success(f"**{r['symbol']}** ({r['sector']}) — LTP ₹{r['live_ltp']:,.2f} is testing Day High ₹{r['high']:,.2f} (+{r['pct']:.2f}%)")
+            else:
+                st.caption("No stocks currently testing 52W/Day High levels.")
+                
+        # High Volatility Movers (|pct| >= 2.5%)
+        vol_movers = board_df[board_df["pct"].abs() >= 2.5].head(4)
+        with breakout_col2:
+            st.markdown("##### ⚡ High Momentum Movers (|Δ| ≥ 2.5%)")
+            if not vol_movers.empty:
+                for _, r in vol_movers.iterrows():
+                    st.info(f"**{r['symbol']}** ({r['sector']}) — Moving {r['pct']:+.2f}% today (Turnover: ₹{r['turnover']/1e7:,.2f} Cr)")
+            else:
+                st.caption("No high volatility movers (|Δ| ≥ 2.5%) in current session.")
+
 
 with view_tab4:
-    st.markdown("#### 📈 Interactive Technical Analysis")
-    if board_df.empty:
-        st.info("ℹ️ No stocks available to analyze under current search/filter.")
-    else:
-        selected_chart_sym = st.selectbox("Select Stock to Analyze", board_df["symbol"].tolist(), index=0)
+    st.markdown("#### 📈 Technical Analysis & Multi-Stock Comparison")
     
-    chart_period = st.radio("Chart Interval", ["1 Mo", "3 Mo", "6 Mo", "1 Yr"], horizontal=True, index=1)
-    period_map = {"1 Mo": "1mo", "3 Mo": "3mo", "6 Mo": "6mo", "1 Yr": "1y"}
+    chart_sub_tab1, chart_sub_tab2 = st.tabs(["🕯️ Single Stock Technical Chart", "⚔️ Multi-Stock Performance Comparison"])
     
-    if yf is not None and go is not None and selected_chart_sym:
-        try:
-            ticker_obj = yf.Ticker(f"{selected_chart_sym}.NS")
-            hist_df = ticker_obj.history(period=period_map[chart_period])
+    with chart_sub_tab1:
+        if board_df.empty:
+            st.info("ℹ️ No stocks available to analyze under current search/filter.")
+        else:
+            selected_chart_sym = st.selectbox("Select Stock to Analyze", board_df["symbol"].tolist(), index=0)
+            chart_period = st.radio("Chart Interval", ["1 Mo", "3 Mo", "6 Mo", "1 Yr"], horizontal=True, index=1, key="single_chart_period")
+            period_map = {"1 Mo": "1mo", "3 Mo": "3mo", "6 Mo": "6mo", "1 Yr": "1y"}
             
-            if not hist_df.empty:
-                # Calculate Technical Indicators
-                hist_df["SMA20"] = hist_df["Close"].rolling(20).mean()
-                hist_df["SMA50"] = hist_df["Close"].rolling(50).mean()
-                
-                # RSI 14
-                delta = hist_df["Close"].diff()
-                gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-                loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-                rs = gain / loss
-                hist_df["RSI"] = 100 - (100 / (1 + rs))
-                
-                # Plotly Candlestick + Volume + RSI
-                fig = make_subplots(
-                    rows=3, cols=1, shared_xaxes=True,
-                    vertical_spacing=0.03, row_heights=[0.55, 0.25, 0.20],
-                    subplot_titles=(f"{selected_chart_sym} Price & Moving Averages", "Volume", "RSI (14)")
-                )
-                
-                # Candlesticks
-                fig.add_trace(go.Candlestick(
-                    x=hist_df.index,
-                    open=hist_df["Open"], high=hist_df["High"],
-                    low=hist_df["Low"], close=hist_df["Close"],
-                    name="Candles"
-                ), row=1, col=1)
-                
-                # SMAs
-                fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df["SMA20"], name="SMA 20", line=dict(color=gold, width=1.5)), row=1, col=1)
-                fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df["SMA50"], name="SMA 50", line=dict(color="#3B82F6", width=1.5)), row=1, col=1)
-                
-                # Volume
-                vol_colors = [green if c >= o else red for c, o in zip(hist_df["Close"], hist_df["Open"])]
-                fig.add_trace(go.Bar(x=hist_df.index, y=hist_df["Volume"], name="Volume", marker_color=vol_colors), row=2, col=1)
-                
-                # RSI
-                fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df["RSI"], name="RSI", line=dict(color="#8B5CF6", width=1.5)), row=3, col=1)
-                fig.add_hline(y=70, line_dash="dash", line_color=red, row=3, col=1)
-                fig.add_hline(y=30, line_dash="dash", line_color=green, row=3, col=1)
-                
-                fig.update_layout(
-                    template="plotly_dark" if is_dark else "plotly_white",
-                    paper_bgcolor="rgba(0,0,0,0)",
-                    plot_bgcolor="rgba(0,0,0,0)",
-                    height=600,
-                    margin=dict(l=20, r=20, t=40, b=20),
-                    xaxis_rangeslider_visible=False
-                )
-                
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.warning(f"Could not load chart data for {selected_chart_sym}.")
-        except Exception as ex:
-            st.error(f"Error generating chart: {ex}")
+            if yf is not None and go is not None and selected_chart_sym:
+                try:
+                    ticker_obj = yf.Ticker(f"{selected_chart_sym}.NS")
+                    hist_df = ticker_obj.history(period=period_map[chart_period])
+                    
+                    if not hist_df.empty:
+                        hist_df["SMA20"] = hist_df["Close"].rolling(20).mean()
+                        hist_df["SMA50"] = hist_df["Close"].rolling(50).mean()
+                        
+                        delta = hist_df["Close"].diff()
+                        gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+                        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+                        rs = gain / loss
+                        hist_df["RSI"] = 100 - (100 / (1 + rs))
+                        
+                        fig = make_subplots(
+                            rows=3, cols=1, shared_xaxes=True,
+                            vertical_spacing=0.03, row_heights=[0.55, 0.25, 0.20],
+                            subplot_titles=(f"{selected_chart_sym} Price & Moving Averages", "Volume", "RSI (14)")
+                        )
+                        
+                        fig.add_trace(go.Candlestick(
+                            x=hist_df.index,
+                            open=hist_df["Open"], high=hist_df["High"],
+                            low=hist_df["Low"], close=hist_df["Close"],
+                            name="Candles"
+                        ), row=1, col=1)
+                        
+                        fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df["SMA20"], name="SMA 20", line=dict(color=gold, width=1.5)), row=1, col=1)
+                        fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df["SMA50"], name="SMA 50", line=dict(color="#3B82F6", width=1.5)), row=1, col=1)
+                        
+                        vol_colors = [green if c >= o else red for c, o in zip(hist_df["Close"], hist_df["Open"])]
+                        fig.add_trace(go.Bar(x=hist_df.index, y=hist_df["Volume"], name="Volume", marker_color=vol_colors), row=2, col=1)
+                        
+                        fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df["RSI"], name="RSI", line=dict(color="#8B5CF6", width=1.5)), row=3, col=1)
+                        fig.add_hline(y=70, line_dash="dash", line_color=red, row=3, col=1)
+                        fig.add_hline(y=30, line_dash="dash", line_color=green, row=3, col=1)
+                        
+                        fig.update_layout(
+                            template="plotly_dark" if is_dark else "plotly_white",
+                            paper_bgcolor="rgba(0,0,0,0)",
+                            plot_bgcolor="rgba(0,0,0,0)",
+                            height=600,
+                            margin=dict(l=20, r=20, t=40, b=20),
+                            xaxis_rangeslider_visible=False
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.warning(f"Could not load chart data for {selected_chart_sym}.")
+                except Exception as ex:
+                    st.error(f"Error generating chart: {ex}")
+                    
+    with chart_sub_tab2:
+        st.markdown("#### ⚔️ Relative Performance Comparison (% Return)")
+        multi_syms = st.multiselect(
+            "Select Stocks to Compare Performance",
+            options=uni_df["symbol"].tolist(),
+            default=["RELIANCE", "TCS", "HDFCBANK", "INFY"][:min(4, len(uni_df))]
+        )
+        comp_period = st.radio("Comparison Timeframe", ["1 Mo", "3 Mo", "6 Mo", "1 Yr"], horizontal=True, index=1, key="multi_comp_period")
+        comp_period_map = {"1 Mo": "1mo", "3 Mo": "3mo", "6 Mo": "6mo", "1 Yr": "1y"}
+        
+        if yf is not None and go is not None and len(multi_syms) > 0:
+            fig_comp = go.Figure()
+            for s in multi_syms:
+                try:
+                    t_obj = yf.Ticker(f"{s}.NS")
+                    h_df = t_obj.history(period=comp_period_map[comp_period])
+                    if not h_df.empty:
+                        first_close = h_df["Close"].iloc[0]
+                        norm_pct = ((h_df["Close"] - first_close) / first_close) * 100
+                        fig_comp.add_trace(go.Scatter(
+                            x=h_df.index, y=norm_pct, name=s, mode="lines", line=dict(width=2)
+                        ))
+                except Exception:
+                    pass
+                    
+            fig_comp.update_layout(
+                template="plotly_dark" if is_dark else "plotly_white",
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+                height=480,
+                margin=dict(l=20, r=20, t=30, b=20),
+                yaxis_title="Normalized Gain / Loss (%)",
+                xaxis_title="Date"
+            )
+            st.plotly_chart(fig_comp, use_container_width=True)
 
