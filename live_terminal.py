@@ -437,6 +437,79 @@ def get_bhavcopy_universe() -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_stock_fundamentals(symbol: str) -> dict:
+    if yf is None or not symbol:
+        return {}
+    try:
+        t = yf.Ticker(f"{symbol}.NS")
+        info = t.info
+        
+        mcap = info.get("marketCap")
+        mcap_cr = f"₹{mcap / 1e7:,.2f} Cr" if mcap else "—"
+        
+        pe = info.get("trailingPE")
+        pe_str = f"{pe:.2f}" if pe else "—"
+        
+        pb = info.get("priceToBook")
+        pb_str = f"{pb:.2f}" if pb else "—"
+        
+        peg = info.get("pegRatio")
+        peg_str = f"{peg:.2f}" if peg else "—"
+        
+        eps = info.get("trailingEps")
+        eps_str = f"₹{eps:,.2f}" if eps else "—"
+        
+        roe = info.get("returnOnEquity")
+        roe_str = f"{roe * 100:.2f}%" if roe is not None else "—"
+        
+        roa = info.get("returnOnAssets")
+        roa_str = f"{roa * 100:.2f}%" if roa is not None else "—"
+        
+        pm = info.get("profitMargins")
+        pm_str = f"{pm * 100:.2f}%" if pm is not None else "—"
+        
+        dte = info.get("debtToEquity")
+        dte_str = f"{dte:.2f}" if dte is not None else "—"
+        
+        div_y = info.get("dividendYield")
+        div_str = f"{div_y * 100:.2f}%" if div_y is not None else "0.00%"
+        
+        bv = info.get("bookValue")
+        bv_str = f"₹{bv:,.2f}" if bv else "—"
+        
+        beta = info.get("beta")
+        beta_str = f"{beta:.2f}" if beta else "—"
+        
+        h52 = info.get("fiftyTwoWeekHigh")
+        h52_str = f"₹{h52:,.2f}" if h52 else "—"
+        
+        l52 = info.get("fiftyTwoWeekLow")
+        l52_str = f"₹{l52:,.2f}" if l52 else "—"
+        
+        return {
+            "mcap": mcap_cr,
+            "pe": pe_str,
+            "pb": pb_str,
+            "peg": peg_str,
+            "eps": eps_str,
+            "roe": roe_str,
+            "roa": roa_str,
+            "margin": pm_str,
+            "debt_equity": dte_str,
+            "div_yield": div_str,
+            "book_val": bv_str,
+            "beta": beta_str,
+            "52h": h52_str,
+            "52l": l52_str,
+            "sector": info.get("sector", "N/A"),
+            "industry": info.get("industry", "N/A"),
+            "summary": info.get("longBusinessSummary", "No company summary available.")
+        }
+    except Exception:
+        return {}
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # GLOBAL CUES CONFIGURATION
 # ═══════════════════════════════════════════════════════════════════════════
@@ -648,9 +721,9 @@ if not board_df.empty:
     else:
         board_df = board_df.sort_values("turnover", ascending=False)
 
-# Board Views: Table, Watchlist, Heatmap & Treemap, Top Movers, Technical Analysis & Comparison
-view_tab1, view_tab_wl, view_tab2, view_tab3, view_tab4 = st.tabs([
-    "📋 Screener Table", "⭐ My Watchlist", "🗺️ Sector Treemap", "🚀 Top Movers & Alerts", "📈 Technicals & Comparison"
+# Board Views: Table, Watchlist, Fundamentals, Heatmap & Treemap, Top Movers, Technical Analysis & Comparison
+view_tab1, view_tab_wl, view_tab_fund, view_tab2, view_tab3, view_tab4 = st.tabs([
+    "📋 Screener Table", "⭐ My Watchlist", "🏢 Fundamentals & Ratios", "🗺️ Sector Treemap", "🚀 Top Movers & Alerts", "📈 Technicals & Comparison"
 ])
 
 with view_tab1:
@@ -767,6 +840,91 @@ with view_tab_wl:
         st.markdown(f'<div class="cue-grid">{"".join(wl_cards_html)}</div>', unsafe_allow_html=True)
     else:
         st.info("⭐ Select one or more stocks above to build your custom live watchlist.")
+
+
+with view_tab_fund:
+    st.markdown("#### 🏢 Company Fundamentals & Key Financial Ratios")
+    available_fund_symbols = uni_df["symbol"].tolist()
+    if available_fund_symbols:
+        col_f1, col_f2 = st.columns([2, 1])
+        with col_f1:
+            selected_fund_sym = st.selectbox(
+                "Select Stock for Fundamental Analysis",
+                options=available_fund_symbols,
+                index=0,
+                key="fund_stock_select"
+            )
+        
+        if selected_fund_sym:
+            with st.spinner(f"Fetching fundamentals for {selected_fund_sym}..."):
+                fund_data = fetch_stock_fundamentals(selected_fund_sym)
+            
+            if fund_data:
+                st.markdown(f"##### 📊 Financial Overview: **{selected_fund_sym}** ({fund_data.get('sector')} • {fund_data.get('industry')})")
+                
+                # 4 KPI Card Grid
+                f_html = f"""
+                <div class="cue-grid">
+                    <div class="cue-card">
+                        <div class="cue-label">Market Capitalization</div>
+                        <div class="cue-price" style="font-size:18px;">{fund_data.get('mcap')}</div>
+                        <div class="muted">Total Equity Value</div>
+                    </div>
+                    <div class="cue-card">
+                        <div class="cue-label">P/E Ratio (Trailing)</div>
+                        <div class="cue-price" style="font-size:18px;">{fund_data.get('pe')}</div>
+                        <div class="muted">Price to Earnings</div>
+                    </div>
+                    <div class="cue-card">
+                        <div class="cue-label">P/B Ratio (Price / Book)</div>
+                        <div class="cue-price" style="font-size:18px;">{fund_data.get('pb')}</div>
+                        <div class="muted">Price to Book Value</div>
+                    </div>
+                    <div class="cue-card">
+                        <div class="cue-label">Return on Equity (ROE)</div>
+                        <div class="cue-price" style="font-size:18px;">{fund_data.get('roe')}</div>
+                        <div class="muted">Net Profit / Shareholder Equity</div>
+                    </div>
+                    <div class="cue-card">
+                        <div class="cue-label">Profit Margin %</div>
+                        <div class="cue-price" style="font-size:18px;">{fund_data.get('margin')}</div>
+                        <div class="muted">Net Income Margin</div>
+                    </div>
+                    <div class="cue-card">
+                        <div class="cue-label">Debt to Equity</div>
+                        <div class="cue-price" style="font-size:18px;">{fund_data.get('debt_equity')}</div>
+                        <div class="muted">Financial Leverage</div>
+                    </div>
+                    <div class="cue-card">
+                        <div class="cue-label">Dividend Yield</div>
+                        <div class="cue-price" style="font-size:18px;">{fund_data.get('div_yield')}</div>
+                        <div class="muted">Annual Dividend Rate</div>
+                    </div>
+                    <div class="cue-card">
+                        <div class="cue-label">Earnings Per Share (EPS)</div>
+                        <div class="cue-price" style="font-size:18px;">{fund_data.get('eps')}</div>
+                        <div class="muted">Trailing 12-Month EPS</div>
+                    </div>
+                    <div class="cue-card">
+                        <div class="cue-label">52-Week Range</div>
+                        <div class="cue-price" style="font-size:15px; margin-top:10px;">{fund_data.get('52l')} – {fund_data.get('52h')}</div>
+                        <div class="muted">High / Low Bounds</div>
+                    </div>
+                    <div class="cue-card">
+                        <div class="cue-label">Beta (Volatility)</div>
+                        <div class="cue-price" style="font-size:18px;">{fund_data.get('beta')}</div>
+                        <div class="muted">Market Correlation</div>
+                    </div>
+                </div>
+                """
+                st.markdown(f_html, unsafe_allow_html=True)
+                
+                with st.expander(f"📖 Company Profile & Description: {selected_fund_sym}"):
+                    st.write(fund_data.get("summary"))
+            else:
+                st.warning(f"Could not load fundamental metrics for {selected_fund_sym}.")
+    else:
+        st.info("No symbols available for fundamental analysis.")
 
 
 with view_tab2:
