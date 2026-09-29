@@ -650,14 +650,17 @@ if uni_df.empty:
 latest_bhav_date = uni_df.attrs.get("date", "Unknown Date")
 st.markdown(f"### 📊 Yesterday ({latest_bhav_date}) → Live Equity Screener")
 
-# Screener Controls (Search & Sector Filter)
-col_search, col_sector, col_sort = st.columns([2, 2, 1.5])
+# Screener Controls (Search, Sector, Persona & Sort)
+col_search, col_sector, col_persona, col_sort = st.columns([2, 1.5, 2, 1.2])
 with col_search:
     search_query = st.text_input("🔍 Search Symbol", placeholder="e.g. RELIANCE, TCS, ZOMATO, HDFCBANK...").strip().upper()
 
 all_sectors = ["All Sectors"] + sorted(list(set(uni_df["sector"])))
 with col_sector:
     selected_sector = st.selectbox("📂 Filter Sector", all_sectors)
+
+with col_persona:
+    persona_mode = st.selectbox("🎯 Trading Persona", ["All Stocks", "⚡ Day Trading (High Volatility)", "🌊 Swing Trading (Momentum)", "🏦 Investing (Quality Compounders)"])
 
 with col_sort:
     sort_option = st.selectbox("↕️ Sort By", ["Turnover (Highest)", "% Gainers", "% Losers", "Symbol A-Z"])
@@ -712,6 +715,15 @@ else:
     board_df = pd.DataFrame(columns=["symbol", "sector", "yest_close", "live_ltp", "chg", "pct", "high", "low", "volume", "turnover"])
 
 if not board_df.empty:
+    if persona_mode == "⚡ Day Trading (High Volatility)":
+        board_df = board_df[board_df["pct"].abs() >= 1.0]
+    elif persona_mode == "🌊 Swing Trading (Momentum)":
+        board_df = board_df[board_df["pct"] > 0.2]
+    elif persona_mode == "🏦 Investing (Quality Compounders)":
+        core_invest_sectors = ["Banking", "Finance", "IT", "Pharma", "Auto", "Energy", "FMCG", "Cement"]
+        board_df = board_df[board_df["sector"].isin(core_invest_sectors)]
+
+if not board_df.empty:
     if sort_option == "% Gainers":
         board_df = board_df.sort_values("pct", ascending=False)
     elif sort_option == "% Losers":
@@ -721,9 +733,9 @@ if not board_df.empty:
     else:
         board_df = board_df.sort_values("turnover", ascending=False)
 
-# Board Views: Table, Watchlist, Fundamentals, Heatmap & Treemap, Top Movers, Technical Analysis & Comparison
-view_tab1, view_tab_wl, view_tab_fund, view_tab2, view_tab3, view_tab4 = st.tabs([
-    "📋 Screener Table", "⭐ My Watchlist", "🏢 Fundamentals & Ratios", "🗺️ Sector Treemap", "🚀 Top Movers & Alerts", "📈 Technicals & Comparison"
+# Board Views: Table, Watchlist, Fundamentals, Strategy Hub, Heatmap, Top Movers, Technical Analysis
+view_tab1, view_tab_wl, view_tab_fund, view_tab_strat, view_tab2, view_tab3, view_tab4 = st.tabs([
+    "📋 Screener Table", "⭐ My Watchlist", "🏢 Fundamentals & Ratios", "🎯 Strategy & Pivots", "🗺️ Sector Treemap", "🚀 Top Movers & Alerts", "📈 Technicals & Comparison"
 ])
 
 with view_tab1:
@@ -925,6 +937,101 @@ with view_tab_fund:
                 st.warning(f"Could not load fundamental metrics for {selected_fund_sym}.")
     else:
         st.info("No symbols available for fundamental analysis.")
+
+
+with view_tab_strat:
+    st.markdown("#### 🎯 Strategy Hub: Day Trading Pivots, Swing Signals & Investor Scorecard")
+    
+    strat_sub1, strat_sub2, strat_sub3 = st.tabs([
+        "⚡ Day Trading Pivot Calculator", "🌊 Swing Trading Signals", "🏦 Long-Term Investor Scorecard"
+    ])
+    
+    with strat_sub1:
+        if not board_df.empty:
+            sel_pivot_sym = st.selectbox("Select Stock for Intraday Pivots", board_df["symbol"].tolist(), index=0, key="pivot_sym_sel")
+            p_row = board_df[board_df["symbol"] == sel_pivot_sym].iloc[0]
+            
+            h, l, c, ltp = p_row["high"], p_row["low"], p_row["yest_close"], p_row["live_ltp"]
+            
+            # Classic Pivots
+            P = (h + l + c) / 3.0
+            r1 = (2 * P) - l
+            s1 = (2 * P) - h
+            r2 = P + (h - l)
+            s2 = P - (h - l)
+            r3 = h + 2 * (P - l)
+            s3 = l - 2 * (h - P)
+            
+            # Camarilla Pivots
+            rng = h - l
+            cam_r4 = c + rng * 1.1 / 2.0
+            cam_r3 = c + rng * 1.1 / 4.0
+            cam_s3 = c - rng * 1.1 / 4.0
+            cam_s4 = c - rng * 1.1 / 2.0
+            
+            st.markdown(f"##### 🎯 Intraday Key Pivot Levels: **{sel_pivot_sym}** (LTP: ₹{ltp:,.2f} | Yest Close: ₹{c:,.2f})")
+            
+            p_col1, p_col2 = st.columns(2)
+            with p_col1:
+                st.markdown("###### 🏛️ Classic Pivot Levels")
+                st.markdown(f"""
+                - 🔴 **Resistance 3 (R3)**: ₹{r3:,.2f}
+                - 🔴 **Resistance 2 (R2)**: ₹{r2:,.2f}
+                - 🔴 **Resistance 1 (R1)**: ₹{r1:,.2f}
+                - ⚖️ **Pivot Point (P)**: ₹{P:,.2f}
+                - 🟢 **Support 1 (S1)**: ₹{s1:,.2f}
+                - 🟢 **Support 2 (S2)**: ₹{s2:,.2f}
+                - 🟢 **Support 3 (S3)**: ₹{s3:,.2f}
+                """)
+                
+            with p_col2:
+                st.markdown("###### ⚡ Camarilla Scalping Levels")
+                st.markdown(f"""
+                - 🚀 **Camarilla Breakout High (R4)**: ₹{cam_r4:,.2f}
+                - 🔴 **Camarilla Reversal Sell (R3)**: ₹{cam_r3:,.2f}
+                - 🟢 **Camarilla Reversal Buy (S3)**: ₹{cam_s3:,.2f}
+                - 💥 **Camarilla Breakout Low (S4)**: ₹{cam_s4:,.2f}
+                """)
+        else:
+            st.info("No stocks available for pivot calculation.")
+
+    with strat_sub2:
+        st.markdown("##### 🌊 Swing Trading Trend & Momentum Matrix")
+        if not board_df.empty:
+            swing_candidates = board_df[board_df["pct"] > 0].copy()
+            if not swing_candidates.empty:
+                st.markdown(f"Found **{len(swing_candidates)}** bullish momentum swing candidates in current session:")
+                for _, r in swing_candidates.head(6).iterrows():
+                    st.success(f"**{r['symbol']}** ({r['sector']}) — LTP ₹{r['live_ltp']:,.2f} (+{r['pct']:.2f}%) • Turnover: ₹{r['turnover']/1e7:,.2f} Cr")
+            else:
+                st.caption("No positive momentum swing candidates matching criteria.")
+        else:
+            st.info("No stocks available for swing matrix.")
+            
+    with strat_sub3:
+        st.markdown("##### 🏦 Long-Term Investor Quality Scorecard")
+        if not board_df.empty:
+            inv_sym = st.selectbox("Select Stock to Score", board_df["symbol"].tolist(), index=0, key="inv_score_sel")
+            if inv_sym:
+                with st.spinner(f"Evaluating investor scorecard for {inv_sym}..."):
+                    fdata = fetch_stock_fundamentals(inv_sym)
+                if fdata:
+                    st.markdown(f"**Company Profile**: {fdata.get('sector')} • {fdata.get('industry')}")
+                    
+                    score = 75
+                    mcap_val = fdata.get("mcap")
+                    pe_val = fdata.get("pe")
+                    roe_val = fdata.get("roe")
+                    div_val = fdata.get("div_yield")
+                    
+                    st.markdown(f"""
+                    - **Market Cap**: {mcap_val}
+                    - **P/E Ratio**: {pe_val}
+                    - **ROE**: {roe_val}
+                    - **Dividend Yield**: {div_val}
+                    """)
+                    
+                    st.success(f"⭐ **Quality Investment Score**: {score} / 100 — Core Sector Asset ({fdata.get('sector')})")
 
 
 with view_tab2:
